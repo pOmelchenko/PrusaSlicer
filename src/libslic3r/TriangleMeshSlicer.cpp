@@ -197,6 +197,11 @@ enum class FacetSliceType {
     Cutting = 2
 };
 
+// Epsilon for robust classification of vertices/edges relative to slicing plane.
+// Chosen conservatively; consider making adaptive to model scale if needed.
+static constexpr float  SLICE_EPS  = 1e-6f;
+static constexpr double SLICE_EPS_D = 1e-6;
+
 // Convert an int32_t scaled coordinate into an unscaled 3D floating point coordinate (mesh vertex).
 template<typename T>
 inline Vec3f contour_point_to_v3f(const Point &pt, const T z)
@@ -255,7 +260,8 @@ inline FacetSliceType slice_facet(
         }
 
         // Is edge or face aligned with the cutting plane?
-        if (a->z() == slice_z && b->z() == slice_z) {
+        if (std::fabs(double(a->z()) - double(slice_z)) <= SLICE_EPS_D &&
+            std::fabs(double(b->z()) - double(slice_z)) <= SLICE_EPS_D) {
             // Edge is horizontal and belongs to the current layer.
             // The following rotation of the three vertices may not be efficient, but this branch happens rarely.
             const Vector &v0 = vertices[0];
@@ -298,7 +304,7 @@ inline FacetSliceType slice_facet(
             return result;
         }
 
-        if (a->z() == slice_z) {
+        if (std::fabs(double(a->z()) - double(slice_z)) <= SLICE_EPS_D) {
             // Only point a alings with the cutting plane.
             if (point_on_layer == size_t(-1) || points[point_on_layer].point_id != a_id) {
                 point_on_layer = num_points;
@@ -306,7 +312,7 @@ inline FacetSliceType slice_facet(
                 static_cast<Point&>(point) = v3f_scaled_to_contour_point(*a);
                 point.point_id = a_id;
             }
-        } else if (b->z() == slice_z) {
+        } else if (std::fabs(double(b->z()) - double(slice_z)) <= SLICE_EPS_D) {
             // Only point b alings with the cutting plane.
             if (point_on_layer == size_t(-1) || points[point_on_layer].point_id != b_id) {
                 point_on_layer = num_points;
@@ -314,7 +320,8 @@ inline FacetSliceType slice_facet(
                 static_cast<Point&>(point) = v3f_scaled_to_contour_point(*b);
                 point.point_id = b_id;
             }
-        } else if ((a->z() < slice_z && b->z() > slice_z) || (b->z() < slice_z && a->z() > slice_z)) {
+        } else if (((a->z() < slice_z - T(SLICE_EPS_D)) && (b->z() > slice_z + T(SLICE_EPS_D))) ||
+                   ((b->z() < slice_z - T(SLICE_EPS_D)) && (a->z() > slice_z + T(SLICE_EPS_D)))) {
             // A general case. The face edge intersects the cutting plane. Calculate the intersection point.
             assert(a_id != b_id);
             // Sort the edge to give a consistent answer.
@@ -351,10 +358,17 @@ inline FacetSliceType slice_facet(
             }
 #else
             // Just clamp the intersection point to source triangle edge.
-            static_cast<Point&>(point) =
-                t <= 0. ? v3f_scaled_to_contour_point(*a) :
-                t >= 1. ? v3f_scaled_to_contour_point(*b) :
-                v3f_scaled_to_contour_point(a->template head<2>().template cast<double>() * (1. - t) + b->template head<2>().template cast<double>() * t + Vec2d(0.5, 0.5));
+            if (t <= SLICE_EPS_D) {
+                static_cast<Point&>(point) = v3f_scaled_to_contour_point(*a);
+                point.point_id = a_id;
+            } else if (t >= 1. - SLICE_EPS_D) {
+                static_cast<Point&>(point) = v3f_scaled_to_contour_point(*b);
+                point.point_id = b_id;
+            } else {
+                static_cast<Point&>(point) = v3f_scaled_to_contour_point(
+                    a->template head<2>().template cast<double>() * (1. - t) +
+                    b->template head<2>().template cast<double>() * t + Vec2d(0.5, 0.5));
+            }
             point.edge_id = edge_id;
             ++ num_points;
 #endif
@@ -372,9 +386,10 @@ inline FacetSliceType slice_facet(
         line_out.edge_a_id  = points[1].edge_id;
         line_out.edge_b_id  = points[0].edge_id;
         line_out.color      = facet_color;
-        // Not a zero lenght edge.
-        //FIXME slice_facet() may create zero length edges due to rounding of doubles into coord_t.
-        //assert(line_out.a != line_out.b);
+        // Not a zero length edge.
+        // Avoid producing a zero-length segment due to snapping / rounding.
+        if (line_out.a == line_out.b)
+            return FacetSliceType::NoSlice;
         // The plane cuts at least one edge in a general position.
         assert(line_out.a_id == -1 || line_out.b_id == -1);
         assert(line_out.edge_a_id != -1 || line_out.edge_b_id != -1);
@@ -2066,7 +2081,8 @@ typename PolygonsType<mesh_info>::type slice_mesh(
             if (trafo_identity) {
                 for (size_t i = 0; i < mesh.vertices.size(); ++ i) {
                     float z = mesh.vertices[i].z();
-                    char  s = z < plane_z ? -1 : z == plane_z ? 0 : 1;
+                    float dz = z - plane_z;
+                    char  s = (dz < -SLICE_EPS) ? -1 : (std::fabs(dz) <= SLICE_EPS ? 0 : 1);
                     vertex_side[i] = s;
                 }
             } else {
@@ -2074,7 +2090,8 @@ typename PolygonsType<mesh_info>::type slice_mesh(
                 for (size_t i = 0; i < mesh.vertices.size(); ++ i) {
                     //FIXME don't need to transform x & y, just Z.
                     float z = (tf * mesh.vertices[i]).z();
-                    char  s = z < plane_z ? -1 : z == plane_z ? 0 : 1;
+                    float dz = z - plane_z;
+                    char  s = (dz < -SLICE_EPS) ? -1 : (std::fabs(dz) <= SLICE_EPS ? 0 : 1);
                     vertex_side[i] = s;
                 }
             }
@@ -2348,7 +2365,9 @@ static void triangulate_slice(
                 // map to itself
                 map_duplicate_vertex[iidx - num_original_vertices] = iidx;
             int j = i;
-            for (++ j; j < int(map_vertex_to_index.size()) && ipos.x() == map_vertex_to_index[j].first.x() && ipos.y() == map_vertex_to_index[j].first.y(); ++ j) {
+            for (++ j; j < int(map_vertex_to_index.size()) &&
+                        std::fabs(double(ipos.x()) - double(map_vertex_to_index[j].first.x())) <= SLICE_EPS_D &&
+                        std::fabs(double(ipos.y()) - double(map_vertex_to_index[j].first.y())) <= SLICE_EPS_D; ++ j) {
                 const int jidx = map_vertex_to_index[j].second;
                 assert(jidx >= num_original_vertices);
                 if (jidx >= num_original_vertices)
@@ -2382,14 +2401,17 @@ static void triangulate_slice(
             for (size_t j = 0; j < 3; ++ j) {
                 Vec3f v = triangles[i ++].cast<float>();
                 auto it = lower_bound_by_predicate(map_vertex_to_index.begin(), map_vertex_to_index.end(), 
-                    [&v](const std::pair<Vec2f, int> &l) { return l.first.x() < v.x() || (l.first.x() == v.x() && l.first.y() < v.y()); });
+                    [&v](const std::pair<Vec2f, int> &l) { return (l.first.x() < v.x()) || (l.first.x() == v.x() && l.first.y() < v.y()); });
                 int   idx = -1;
-                if (it != map_vertex_to_index.end() && it->first.x() == v.x() && it->first.y() == v.y())
+                if (it != map_vertex_to_index.end() &&
+                    std::fabs(double(it->first.x()) - double(v.x())) <= SLICE_EPS_D &&
+                    std::fabs(double(it->first.y()) - double(v.y())) <= SLICE_EPS_D)
                     idx = it->second;
                 else {
                     // Try to find the vertex in the list of newly added vertices. Those vertices are not matched on the cut and they shall be rare.
                     for (size_t k = idx_vertex_new_first; k < its.vertices.size(); ++ k)
-                        if (its.vertices[k] == v) {
+                        if (std::fabs(double(its.vertices[k].x()) - double(v.x())) <= SLICE_EPS_D &&
+                            std::fabs(double(its.vertices[k].y()) - double(v.y())) <= SLICE_EPS_D) {
                             idx = int(k);
                             break;
                         }
@@ -2483,7 +2505,8 @@ void cut_mesh(const indexed_triangle_set &mesh, float z, indexed_triangle_set *u
         
         // intersect facet with cutting plane
         IntersectionLine line;
-        int              idx_vertex_lowest = (vertices[1].z() == min_z) ? 1 : ((vertices[2].z() == min_z) ? 2 : 0);
+        auto eqz = [](float a, float b) { return std::fabs(double(a) - double(b)) <= SLICE_EPS_D; };
+        int              idx_vertex_lowest = eqz(vertices[1].z(), min_z) ? 1 : (eqz(vertices[2].z(), min_z) ? 2 : 0);
         FacetSliceType   slice_type = FacetSliceType::NoSlice;
         if (z > min_z - EPSILON && z < max_z + EPSILON) {
             Vec3d vertices_scaled[3];
@@ -2503,7 +2526,8 @@ void cut_mesh(const indexed_triangle_set &mesh, float z, indexed_triangle_set *u
                 lower_slice_vertices.emplace_back(line.a_id);
                 lower_slice_vertices.emplace_back(line.b_id);
                 if (lower) {
-                    lower_lines.emplace_back(line);
+                    if (line.a != line.b)
+                        lower_lines.emplace_back(line);
                     if (triangulate_caps) {
                         // Snap these vertices to coord_t grid, so that they will be matched with the vertices produced
                         // by triangulating opening on the cut.
@@ -2515,7 +2539,8 @@ void cut_mesh(const indexed_triangle_set &mesh, float z, indexed_triangle_set *u
                 upper_slice_vertices.emplace_back(line.a_id);
                 upper_slice_vertices.emplace_back(line.b_id);
                 if (upper) {
-                    upper_lines.emplace_back(line);
+                    if (line.a != line.b)
+                        upper_lines.emplace_back(line);
                     if (triangulate_caps) {
                         // Snap these vertices to coord_t grid, so that they will be matched with the vertices produced
                         // by triangulating opening on the cut.
@@ -2524,20 +2549,32 @@ void cut_mesh(const indexed_triangle_set &mesh, float z, indexed_triangle_set *u
                     }
                 }
             } else if (line.edge_type == IntersectionLine::FacetEdgeType::General && triangulate_caps) {
-                lower_lines.emplace_back(line);
-                upper_lines.emplace_back(line);
+                if (line.a != line.b) {
+                    lower_lines.emplace_back(line);
+                    upper_lines.emplace_back(line);
+                }
             }
         }
         
-        if (min_z > z || (min_z == z && max_z > z)) {
+        // Robust classification of the whole facet relative to the cut plane.
+        auto sidef = [&](float zv)->int{ double dz = double(zv) - double(z); return (dz < -SLICE_EPS_D) ? -1 : (std::fabs(dz) <= SLICE_EPS_D ? 0 : 1); };
+        int s0 = sidef(vertices[0].z());
+        int s1 = sidef(vertices[1].z());
+        int s2 = sidef(vertices[2].z());
+        bool all_ge0 = (s0>=0 && s1>=0 && s2>=0);
+        bool any_pos = (s0>0 || s1>0 || s2>0);
+        bool all_le0 = (s0<=0 && s1<=0 && s2<=0);
+        bool any_neg = (s0<0 || s1<0 || s2<0);
+
+        if (all_ge0 && any_pos) {
             // facet is above the cut plane and does not belong to it
             if (upper != nullptr)
                 upper->indices.emplace_back(facet);
-        } else if (max_z < z || (max_z == z && min_z < z)) {
+        } else if (all_le0 && any_neg) {
             // facet is below the cut plane and does not belong to it
             if (lower != nullptr)
                 lower->indices.emplace_back(facet);
-        } else if (min_z < z && max_z > z) {
+        } else if ((s0 < 0 || s1 < 0 || s2 < 0) && (s0 > 0 || s1 > 0 || s2 > 0)) {
             // Facet is cut by the slicing plane.
             assert(slice_type == FacetSliceType::Slicing);
             assert(line.edge_type == IntersectionLine::FacetEdgeType::General);
@@ -2545,9 +2582,10 @@ void cut_mesh(const indexed_triangle_set &mesh, float z, indexed_triangle_set *u
             assert(line.edge_b_id != -1);
 
             // look for the vertex on whose side of the slicing plane there are no other vertices
+            auto abv = [&](float v)->bool{ return (double(v) - double(z)) > SLICE_EPS_D; };
             int isolated_vertex = 
-                (vertices[0].z() > z) == (vertices[1].z() > z) ? 2 :
-                (vertices[1].z() > z) == (vertices[2].z() > z) ? 0 : 1;
+                (abv(vertices[0].z()) == abv(vertices[1].z())) ? 2 :
+                (abv(vertices[1].z()) == abv(vertices[2].z())) ? 0 : 1;
             
             // get vertices starting from the isolated one
             int iv = isolated_vertex;

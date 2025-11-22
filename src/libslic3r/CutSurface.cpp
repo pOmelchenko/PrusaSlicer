@@ -738,8 +738,11 @@ bool priv::is_out_of(const Vec3d &v, const PointNormal &point_normal)
 {
     const Vec3d& p = point_normal.first;
     const Vec3d& n = point_normal.second;
+    // Robust classification of a point relative to plane (p, n)
+    // Use small epsilon to account for numeric noise.
+    static constexpr double PLANE_SIDE_EPS = 1e-6;
     double signed_distance = (v - p).dot(n);
-    return signed_distance > 1e-5;
+    return signed_distance >= PLANE_SIDE_EPS;
 };
 
 bool priv::is_all_on_one_side(const Vec3i &t, const IsOnSides& is_on_sides) {
