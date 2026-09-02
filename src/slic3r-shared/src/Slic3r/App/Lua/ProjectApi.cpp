@@ -47,6 +47,13 @@ struct Mesh
     }
 };
 
+struct ConfigBoxRef
+{
+    Domain::ConfigBox& config;
+    Biz::Preset::PresetInteractor& preset_interactor;
+    size_t element_idx;
+};
+
 enum class ElementType
 {
     Object, Volume, Instance
@@ -100,24 +107,40 @@ struct BedInstRef
         return config_container().selected_preset().hw_config;
     }
 
-    Domain::ConfigBox& printer_presets()
+    ConfigBoxRef printer_presets()
     {
-        return config_container().mutable_selected_preset().printer.config_box();
+        return {
+            config_container().mutable_selected_preset().printer.config_box(),
+            project_interactor.preset_interactor(),
+            0
+        };
     }
 
-    Domain::ConfigBox& print_presets()
+    ConfigBoxRef print_presets()
     {
-        return config_container().mutable_selected_preset().print.config_box();
+        return {
+            config_container().mutable_selected_preset().print.config_box(),
+            project_interactor.preset_interactor(),
+            0
+        };
     }
 
-    Domain::ConfigBox& tool_print_presets(size_t tool_idx)
+    ConfigBoxRef tool_print_presets(size_t tool_idx)
     {
-        return config_container().mutable_selected_preset().tools.at(tool_idx).config_box();
+        return {
+            config_container().mutable_selected_preset().tools.at(tool_idx).config_box(),
+            project_interactor.preset_interactor(),
+            tool_idx
+        };
     }
 
-    Domain::ConfigBox& material_presets(size_t slot_idx)
+    ConfigBoxRef material_presets(size_t slot_idx)
     {
-        return config_container().mutable_selected_preset().materials.at(slot_idx).config_box();
+        return {
+            config_container().mutable_selected_preset().materials.at(slot_idx).config_box(),
+            project_interactor.preset_interactor(),
+            slot_idx
+        };
     }
 };
 
@@ -157,65 +180,82 @@ Domain::FloatOrPercentage parse_float_or_percentage(const sol::object& o)
     return {o.as<double>()};
 }
 
+bool set_config_value(
+    Domain::ConfigValue& value,
+    const Domain::ConfigItemDef& def,
+    const sol::object& val
+)
+{
+    bool success = true;
+    value.visit(
+        Domain::overloaded{
+            [&val](double& dest_val)
+            {
+                dest_val = val.as<double>();
+            },
+            [&val](int& dest_val)
+            {
+                dest_val = val.as<int>();
+            },
+            [&val](Domain::Percentage& dest_val)
+            {
+                dest_val = parse_percentage(val);
+            },
+            [&val](Domain::FloatOrPercentage& dest_val)
+            {
+                dest_val = parse_float_or_percentage(val);
+            },
+            [&val, &def](Domain::EnumWrapper& dest_val)
+            {
+                std::string enum_name = val.as<std::string>();
+                const bool contains   = std::ranges::any_of(
+                    dest_val.def(),
+                    [&enum_name](const Domain::EnumValueDef& d)
+                    { return d.str_serialized == enum_name; }
+                );
+                if (contains) {
+                    dest_val.set_string(enum_name);
+                } else {
+                    SPDLOG_ERROR(
+                        "Unknown enum value {} for {}, allowed values are: {}",
+                        enum_name,
+                        def.name,
+                        fmt::join(
+                            dest_val.def()
+                                | std::views::transform(
+                                    [](const Domain::EnumValueDef& def) -> std::string_view
+                                    { return def.str_serialized; }
+                                ),
+                            ", "
+                        )
+                    );
+                }
+            },
+            [&success](auto&)
+            {
+                success = false;
+            }
+        }
+    );
+
+    return success;
+}
+
 bool set_param(Domain::ConfigBox& settings, const std::string& name, const sol::object& val)
 {
-    auto it      = settings.find(name);
-    bool success = false;
-    if (it.item) {
-        success = true;
-        it.item->visit(
-            Domain::overloaded{
-                [&val](double& dest_val)
-                {
-                    dest_val = val.as<double>();
-                },
-                [&val](int& dest_val)
-                {
-                    dest_val = val.as<int>();
-                },
-                [&val](Domain::Percentage& dest_val)
-                {
-                    dest_val = parse_percentage(val);
-                },
-                [&val](Domain::FloatOrPercentage& dest_val)
-                {
-                    dest_val = parse_float_or_percentage(val);
-                },
-                [&val, &it](Domain::EnumWrapper& dest_val)
-                {
-                    std::string enum_name = val.as<std::string>();
-                    const bool contains   = std::ranges::any_of(
-                        dest_val.def(),
-                        [&enum_name](const Domain::EnumValueDef& d)
-                        { return d.str_serialized == enum_name; }
-                    );
-                    if (contains) {
-                        dest_val.set_string(enum_name);
-                    } else {
-                        SPDLOG_ERROR(
-                            "Unknown enum value {} for {}, allowed values are: {}",
-                            enum_name,
-                            it.item->def().name,
-                            fmt::join(
-                                dest_val.def()
-                                    | std::views::transform(
-                                        [](const Domain::EnumValueDef& def) -> std::string_view
-                                        { return def.str_serialized; }
-                                    ),
-                                ", "
-                            )
-                        );
-                    }
-                },
-                [&success](auto& val)
-                {
-                    success = false;
-                }
-            }
-        );
-        if (it.is_override) {
-            settings.overrides.enable(name);
-        }
+    auto it = settings.find(name);
+    if (!it.item) {
+        return false;
+    }
+
+    Domain::ConfigValue value = it.item->value();
+    const bool success = set_config_value(value, it.item->def(), val);
+    if (success) {
+        it.item->set(value);
+    }
+
+    if (it.is_override) {
+        settings.overrides.enable(name);
     }
 
     return success;
@@ -702,10 +742,10 @@ void ProjectApi::register_api(Biz::Lua::LuaEngine& lua)
     //--@param name string The config key.
     //--@param value any The value to set.
     //- function ConfigBox:set(name, value) end
-    state.new_usertype<Domain::ConfigBox>("ConfigBox", sol::no_constructor,
-        "value", [](const Domain::ConfigBox& config, const std::string& name) -> ExposedConfigValue
+    state.new_usertype<ConfigBoxRef>("ConfigBox", sol::no_constructor,
+        "value", [](const ConfigBoxRef& config_ref, const std::string& name) -> ExposedConfigValue
         {
-            const auto it = config.find(name);
+            const auto it = config_ref.config.find(name);
             if (!it.item) {
                 throw Biz::Lua::LuaException(
                     fmt::format("Invalid preset item name '{}': not found", name)
@@ -725,9 +765,23 @@ void ProjectApi::register_api(Biz::Lua::LuaEngine& lua)
                 }
             );
         },
-        "set", [](Domain::ConfigBox& config, const std::string& name, const sol::object& value)
+        "set", [](ConfigBoxRef& config_ref, const std::string& name, const sol::object& new_value)
         {
-            set_param(config, name, value);
+            const auto it = config_ref.config.find(name);
+            if (!it.item) {
+                return;
+            }
+
+            Domain::ConfigValue value = it.item->value();
+            if (!set_config_value(value, it.item->def(), new_value)) {
+                return;
+            }
+
+            config_ref.preset_interactor.set_item_value(
+                *it.item,
+                value,
+                {config_ref.element_idx}
+            );
         }
     );
 

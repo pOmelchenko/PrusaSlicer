@@ -1529,6 +1529,8 @@ if(SLIC3R_BUILD_TESTS)
             test/main.cpp
 
             test/Slic3r/App/DialogNavigationTests.cpp
+            test/Slic3r/App/Lua/PluginDialogTests.cpp
+            test/Slic3r/App/Lua/ProjectApiTests.cpp
 
             test/Slic3r/App/Scene/Node.cpp
             test/Slic3r/App/Scene/Ray.cpp
