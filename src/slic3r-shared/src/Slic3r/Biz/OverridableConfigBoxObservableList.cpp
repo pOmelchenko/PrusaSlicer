@@ -96,13 +96,21 @@ void OverridableConfigBoxObservableList::set_value(
             [key](const Domain::ConfigItem& item) { return item.def().name == key; }
         );
 
-        if (index != all_items.cend() && index->value() != value) {
-            m_config_box->overrides.set(std::string{key}, value);
+        if (index != all_items.cend()) {
+            const bool value_changed = index->value() != value;
+            const bool was_enabled =
+                m_config_box->overrides.get(std::string{key}).has_value();
+            const bool observable_was_enabled = override_item_it->overriden.value_or(false);
 
-            invoke_listeners<IListObserver<Biz::OverrideItem>>(
-                [override_item_index](IListObserver<Biz::OverrideItem>* l)
-                { l->on_updated(override_item_index); }
-            );
+            if (value_changed || !was_enabled || !observable_was_enabled) {
+                m_config_box->overrides.set(std::string{key}, value);
+                override_item_it->overriden = true;
+
+                invoke_listeners<IListObserver<Biz::OverrideItem>>(
+                    [override_item_index](IListObserver<Biz::OverrideItem>* l)
+                    { l->on_updated(override_item_index); }
+                );
+            }
 
             return;
         }

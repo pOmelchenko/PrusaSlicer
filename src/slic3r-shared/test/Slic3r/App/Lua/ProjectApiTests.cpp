@@ -7,6 +7,7 @@
 #include "Slic3r/App/Platform/StdMainThreadDispatcher.hpp"
 #include "Slic3r/Biz/Emboss/IFontManager.hpp"
 #include "Slic3r/Biz/ISlicingInputChangedListener.hpp"
+#include "Slic3r/Biz/OverridableConfigBoxObservableList.hpp"
 #include "Slic3r/Biz/Preset/IO/BundlePaths.hpp"
 #include "Slic3r/Biz/Preset/IPresetChangedListener.hpp"
 #include "Slic3r/Biz/Slicing/TestUtils.hpp"
@@ -186,4 +187,67 @@ TEST_CASE_METHOD(
         "xy_size_compensation"
     });
     REQUIRE(config_change_recorder.slicing_input_change_count == 2);
+}
+
+TEST_CASE_METHOD(
+    LuaProjectApiFixture,
+    "Lua preset setters enable material overrides with unchanged stored values",
+    "[Lua][ProjectApi]"
+)
+{
+    const auto& initial_material_config =
+        project_interactor.selected_config_container()
+            .selected_preset()
+            .materials.at(0)
+            .config_box();
+    REQUIRE_FALSE(initial_material_config.overrides.get("retract_length").has_value());
+
+    const auto* stored_override = initial_material_config.overrides.find("retract_length");
+    REQUIRE(stored_override != nullptr);
+    REQUIRE_THAT(stored_override->get<double>(), WithinAbs(2.0, 1e-9));
+
+    const auto observable_material_config =
+        project_interactor.preset_interactor()
+            .material_cbi_list()
+            .at(0)
+            .config_box_overridable_list()
+            .lock();
+    REQUIRE(observable_material_config != nullptr);
+    const auto [initial_observable_value, initial_observable_override_enabled] =
+        observable_material_config->find("retract_length");
+    REQUIRE(initial_observable_value != nullptr);
+    REQUIRE(initial_observable_override_enabled.has_value());
+    REQUIRE_FALSE(*initial_observable_override_enabled);
+
+    Slic3r::App::Lua::ProjectApi project_api(project_interactor, font_manager);
+    Slic3r::Biz::Lua::LuaEngine lua;
+    lua.open_registry([&project_api](auto& engine) { project_api.register_api(engine); });
+
+    const auto result = lua.run_script(R"lua(
+        local material = api.project:current_bed():material_presets(0)
+        material:set("retract_length", 2.0)
+    )lua");
+    if (!result.valid()) {
+        const sol::error error = result;
+        INFO(error.what());
+    }
+    REQUIRE(result.valid());
+
+    const auto& material_config =
+        project_interactor.selected_config_container()
+            .selected_preset()
+            .materials.at(0)
+            .config_box();
+    const auto retract_length = material_config.overrides.get("retract_length");
+    REQUIRE(retract_length.has_value());
+    REQUIRE_THAT(retract_length->get<double>(), WithinAbs(2.0, 1e-9));
+
+    const auto [observable_value, observable_override_enabled] =
+        observable_material_config->find("retract_length");
+    REQUIRE(observable_value != nullptr);
+    REQUIRE(observable_override_enabled.has_value());
+    REQUIRE(*observable_override_enabled);
+
+    REQUIRE(config_change_recorder.changed_items == std::vector<std::string>{"retract_length"});
+    REQUIRE(config_change_recorder.slicing_input_change_count == 1);
 }
