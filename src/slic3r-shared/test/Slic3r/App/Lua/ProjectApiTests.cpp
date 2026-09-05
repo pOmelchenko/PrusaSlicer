@@ -141,6 +141,45 @@ struct LuaProjectApiFixture
 
 } // namespace
 
+TEST_CASE_METHOD(LuaProjectApiFixture, "Lua material identity follows the selected preset and returns a copy", "[Lua][ProjectApi]")
+{
+    using namespace Slic3r;
+    App::Lua::ProjectApi project_api(project_interactor, font_manager);
+    Biz::Lua::LuaEngine lua;
+    lua.open_registry([&project_api](auto& engine) { project_api.register_api(engine); });
+    const auto initial = project_interactor.selected_config_container().selected_preset().metadata();
+    REQUIRE(lua.run_script(R"lua(
+        bed = api.project:current_bed()
+        original = bed:material_preset_info(0)
+        original_id, original_name = original.id, original.name
+        original.name = "changed in Lua only"
+        invalid_slot_ok = pcall(function() bed:material_preset_info(9999) end)
+    )lua").valid());
+    REQUIRE(lua.state()["original_id"].get<std::string>() == initial.materials.at(0).id);
+    REQUIRE(lua.state()["original_name"].get<std::string>() == initial.materials.at(0).name);
+    REQUIRE_FALSE(lua.state()["invalid_slot_ok"].get<bool>());
+    REQUIRE(project_interactor.selected_config_container().selected_preset().materials.at(0).name == initial.materials.at(0).name);
+    REQUIRE(config_change_recorder.changed_items.empty());
+    REQUIRE(config_change_recorder.slicing_input_change_count == 0);
+
+    // The minimal fixture has one preset. Supply a second material identity
+    // and change the selected slot to check lookup freshness and slot indexing.
+    const std::string next_id = "test.other-material";
+    const std::string next_name = "Custom PETG";
+    auto& selected = project_interactor.selected_config_container().mutable_selected_preset();
+    auto other = selected.materials.at(0);
+    other.id = next_id;
+    other.name = next_name;
+    selected.materials.push_back(other);
+    REQUIRE(lua.run_script("second = bed:material_preset_info(1)").valid());
+    REQUIRE(lua.state()["second"]["name"].get<std::string>() == next_name);
+    selected.materials.at(0) = other;
+    REQUIRE(lua.run_script("current = bed:material_preset_info(0)").valid());
+    REQUIRE(lua.state()["current"]["id"].get<std::string>() == next_id);
+    REQUIRE(lua.state()["current"]["name"].get<std::string>() == next_name);
+    REQUIRE(lua.state()["original"]["id"].get<std::string>() == initial.materials.at(0).id);
+}
+
 TEST_CASE_METHOD(
     LuaProjectApiFixture,
     "Lua preset setters apply values and notify project listeners",

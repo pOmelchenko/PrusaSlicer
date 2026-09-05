@@ -158,8 +158,22 @@ void PluginSystem::execute_plugin(const std::string& id)
     }
     const auto& plugin = it->second;
     ASSERT(m_dialog.get() != nullptr);
+    auto meta = plugin.meta();
+    if (meta.has_description_callback) {
+        try {
+            ProjectApi project_api(m_project_interactor, m_font_manager);
+            Biz::Lua::LuaEngine lua;
+            lua.open_registry([&project_api](auto& engine) { project_api.register_api(engine); });
+            PackageRegistry package_registry;
+            lua.open_registry([&package_registry](auto& engine) { package_registry.register_api(engine); });
+            meta.context = plugin.describe(lua);
+        } catch (const std::exception& e) {
+            SPDLOG_ERROR("Describing plugin {} failed\n{}", plugin.meta().id, e.what());
+            meta.context = Biz::_u8L("Plugin context unavailable. See the process log for details.");
+        }
+    }
     m_dialog->show_plugin(
-        plugin.meta(),
+        meta,
         m_last_plugin_data.has_value() && m_last_plugin_data->meta.id == id ?
             m_last_plugin_data->param_values :
             PluginParamValueMap{}

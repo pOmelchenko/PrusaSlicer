@@ -142,6 +142,13 @@ struct BedInstRef
             slot_idx
         };
     }
+
+    sol::table material_preset_info(sol::this_state state, size_t slot_idx) const
+    {
+        const auto& material = config_container().selected_preset().materials.at(slot_idx);
+        // Return a copy; editing the Lua table cannot rename or select a preset.
+        return sol::state_view(state).create_table_with("id", material.id, "name", material.name);
+    }
 };
 
 namespace {
@@ -830,12 +837,17 @@ void ProjectApi::register_api(Biz::Lua::LuaEngine& lua)
     //--@param slot_idx integer
     //--@return ConfigBox
     //- function BedInstRef:material_presets(slot_idx) end
+    //-- Returns a snapshot of the selected material preset identity.
+    //--@param slot_idx integer Zero-based material slot.
+    //--@return table info Contains id and name strings; invalid slots raise an error.
+    //- function BedInstRef:material_preset_info(slot_idx) end
     state.new_usertype<BedInstRef>("BedInstRef", sol::no_constructor,
         "printer_config", &BedInstRef::printer_config,
         "printer_presets", &BedInstRef::printer_presets,
         "print_presets", &BedInstRef::print_presets,
         "tool_print_presets", &BedInstRef::tool_print_presets,
-        "material_presets", &BedInstRef::material_presets
+        "material_presets", &BedInstRef::material_presets,
+        "material_preset_info", &BedInstRef::material_preset_info
     );
 
     //--@class FontDescriptor

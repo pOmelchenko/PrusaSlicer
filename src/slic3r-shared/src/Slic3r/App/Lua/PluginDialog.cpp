@@ -180,6 +180,10 @@ PluginDialog::show_plugin(const PluginMeta& plugin_meta, const PluginParamValueM
     m_input_page = content()->emplace_back<Item>();
     m_input_page->set_orientation(Orientation::Vertical);
     m_input_page->set_gap(8);
+    if (plugin_meta.context && !plugin_meta.context->empty()) {
+        auto* context = m_input_page->emplace_back<Text>(*plugin_meta.context);
+        context->set_wrap_mode(Text::WrapMode::Wrap);
+    }
     if (plugin_meta.description) {
         auto* description = m_input_page->emplace_back<Text>(*plugin_meta.description);
         description->set_wrap_mode(Text::WrapMode::Wrap);
@@ -253,6 +257,10 @@ PluginDialog::show_plugin(const PluginMeta& plugin_meta, const PluginParamValueM
     result_scroll->set_orientation(Orientation::Vertical);
     result_scroll->set_gap(10);
     result_scroll->set_max_height(460);
+    if (plugin_meta.context && !plugin_meta.context->empty()) {
+        auto* context = result_scroll->emplace_back<Text>(*plugin_meta.context);
+        context->set_wrap_mode(Text::WrapMode::Wrap);
+    }
     m_summary = result_scroll->emplace_back<Text>("");
     m_summary->set_wrap_mode(Text::WrapMode::Wrap);
     auto* details_toggle = result_scroll->emplace_back<ToggleButton>(Biz::_u8L("Show details"));

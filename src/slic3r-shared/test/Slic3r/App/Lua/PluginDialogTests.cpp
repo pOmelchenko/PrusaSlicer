@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <boost/filesystem.hpp>
+#include <fstream>
 
 #include "Slic3r/App/Lua/PluginDialog.hpp"
 #include "Slic3r/App/Yoga/ImGuiFixture.hpp"
@@ -8,6 +10,7 @@
 #include "Slic3r/App/Yoga/Validator.hpp"
 #include "Slic3r/App/Yoga/ToggleButton.hpp"
 #include "Slic3r/App/Yoga/Text.hpp"
+#include "Slic3r/Biz/Lua/LuaException.hpp"
 
 using Catch::Matchers::WithinAbs;
 
@@ -28,6 +31,88 @@ public:
 };
 
 } // namespace
+
+TEST_CASE("Lua dialog context is recomputed without executing the plugin", "[Lua][PluginDialog]")
+{
+    using namespace Slic3r;
+    struct TempScript
+    {
+        boost::filesystem::path path = boost::filesystem::temp_directory_path() /
+            boost::filesystem::unique_path("plugin-context-%%%%-%%%%.lua");
+        ~TempScript() { boost::filesystem::remove(path); }
+        void write(const std::string& source) { std::ofstream(path.string()) << source; }
+    } script;
+    const std::string source = R"lua(
+        info = {id="test.context", type="project.plugin"}
+        function execute() error("must not execute when opening the form") end
+        function describe() return api.name end
+    )lua";
+    script.write(source);
+    Biz::Lua::LuaEngine scan;
+    REQUIRE(scan.run_file(script.path.string()).valid());
+    auto parsed = App::Lua::Plugin::parse(scan, "", script.path.string());
+    REQUIRE(parsed.has_value());
+    REQUIRE(parsed->meta().has_description_callback);
+
+    Biz::Lua::LuaEngine lua;
+    lua.state()["api"] = lua.state().create_table_with("name", "PLA");
+    lua.set_path_resolver([](const std::string&) { return "previous resolver"; });
+    REQUIRE(parsed->describe(lua) == "PLA");
+    lua.state()["api"]["name"] = "PETG";
+    REQUIRE(parsed->describe(lua) == "PETG");
+    REQUIRE(lua.resolve_file("test") == "previous resolver");
+
+    SECTION("callback errors restore the resolver") {
+        script.write(source + "\nfunction describe() error('context failure') end");
+    }
+    SECTION("non-text context is rejected") {
+        script.write(source + "\nfunction describe() return {} end");
+    }
+    SECTION("top-level errors are not ignored") {
+        script.write(source + "\nerror('load failure')");
+    }
+    REQUIRE_THROWS_AS(parsed->describe(lua), Biz::Lua::LuaException);
+    REQUIRE(lua.resolve_file("test") == "previous resolver");
+}
+
+TEST_CASE("Legacy Lua plugins do not run code when opening their forms", "[Lua][PluginDialog]")
+{
+    using namespace Slic3r;
+    Biz::Lua::LuaEngine scan;
+    REQUIRE(scan.run_script("info={id='legacy', type='project.plugin'}; function execute() end").valid());
+    auto parsed = App::Lua::Plugin::parse(scan, "", "nonexistent-legacy-plugin.lua");
+    REQUIRE(parsed.has_value());
+    REQUIRE_FALSE(parsed->meta().has_description_callback);
+    Biz::Lua::LuaEngine lua;
+    REQUIRE_FALSE(parsed->describe(lua).has_value());
+}
+
+TEST_CASE_METHOD(ImGuiFixture, "Lua dialog context is read-only and refreshed on reopening", "[Lua][PluginDialog]")
+{
+    using namespace Slic3r::App;
+    Lua::PluginParamValueMap values;
+    auto* dialog = root.emplace_back<TestPluginDialog>(
+        [&](const Lua::PluginMeta&, const Lua::PluginParamValueMap& params) { values = params; });
+    Lua::PluginMeta meta{
+        .id="test.context", .type=Lua::PluginType::ProjectPlugin,
+        .params={{.name="reading", .label="Reading", .type="string", .default_value=std::string{}}},
+        .context="Filament: PLA, slot 1"
+    };
+    dialog->show_plugin(meta, {{"reading", std::string{"39.98"}}});
+    REQUIRE(dynamic_cast<Yoga::Text*>(dialog->input_page()->get_item(0))->text() == *meta.context);
+    auto* run = dynamic_cast<Yoga::LayoutButton*>(dialog->input_page()->get_item(2)->get_item(0));
+    run->callbacks().action();
+    REQUIRE(values.size() == 1);
+    REQUIRE(std::get<std::string>(values.at("reading")) == "39.98");
+    dialog->show_result("Preview", "Details");
+    REQUIRE(dynamic_cast<Yoga::Text*>(dialog->result_page()->get_item(0)->get_item(0))->text() == *meta.context);
+    meta.context = "Filament: PETG, slot 1";
+    dialog->show_plugin(meta, values);
+    REQUIRE(dynamic_cast<Yoga::Text*>(dialog->input_page()->get_item(0))->text() == *meta.context);
+    REQUIRE_FALSE(dialog->result_page()->is_self_visible());
+    auto* fields = dialog->input_page()->get_item(1);
+    REQUIRE(dynamic_cast<Yoga::InputTextField*>(fields->get_item(0)->get_item(1))->text() == "39.98");
+}
 
 TEST_CASE_METHOD(
     ImGuiFixture,

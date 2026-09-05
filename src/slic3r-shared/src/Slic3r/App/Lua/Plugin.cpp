@@ -116,6 +116,7 @@ Plugin::parse(Biz::Lua::LuaEngine& lua, const std::string& id_prefix, const std:
     meta.description = info.get<std::optional<std::string>>("description");
     meta.dialog_width = info.get<std::optional<int>>("dialog_width");
     meta.input_width = info.get<std::optional<int>>("input_width");
+    meta.has_description_callback = state["describe"].is<sol::function>();
 
     if (meta.type != PluginType::ProjectPlugin) {
         return tl::unexpected{fmt::format("Unsupported plugin type '{}'", to_string(meta.type))};
@@ -152,6 +153,38 @@ Plugin::parse(Biz::Lua::LuaEngine& lua, const std::string& id_prefix, const std:
 
 Plugin::Plugin(std::string path, PluginMeta meta) : m_path(std::move(path)), m_meta(std::move(meta))
 {}
+
+std::optional<std::string> Plugin::describe(Biz::Lua::LuaEngine& lua) const
+{
+    // Existing plugins must not gain a second execution of their top-level code.
+    if (!m_meta.has_description_callback) return std::nullopt;
+
+    struct ResolverScope
+    {
+        Biz::Lua::LuaEngine& lua;
+        Biz::Lua::LuaEngine::FilePathResolveFn previous;
+        ~ResolverScope() { lua.set_path_resolver(std::move(previous)); }
+    } scope{lua, lua.path_resolver()};
+    lua.set_path_resolver(SafeFileResolver{m_path});
+
+    if (const auto loaded = lua.run_file(m_path); !loaded.valid()) {
+        const sol::error err = loaded;
+        throw Biz::Lua::LuaException(err.what(), m_path);
+    }
+    if (!lua.state()["describe"].is<sol::function>()) {
+        throw Biz::Lua::LuaException("Missing describe() function; rescan plugins", m_path);
+    }
+    sol::protected_function fn = lua.state()["describe"];
+    const sol::protected_function_result result = fn();
+    if (!result.valid()) {
+        const sol::error err = result;
+        throw Biz::Lua::LuaException(err.what(), m_path);
+    }
+    if (result.return_count() != 1 || result.get_type() != sol::type::string) {
+        throw Biz::Lua::LuaException("describe() must return one string", m_path);
+    }
+    return result.get<std::string>();
+}
 
 void Plugin::execute(Biz::Lua::LuaEngine& lua, const PluginParamValueMap& params) const
 {

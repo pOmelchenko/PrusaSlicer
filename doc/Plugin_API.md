@@ -105,6 +105,35 @@ does not call this function retains the normal close-on-Run behavior.
 For compatibility, check `type(api.show_result) == "function"` before calling.
 This is a presentation API and does not confirm preset writes or slicing state.
 
+Plugins may define an optional `describe()` function returning one plain-text
+string. On each menu opening the host reloads the script in a fresh Lua state
+with the project API and calls `describe()` before displaying the form. The text
+appears above the instructions and is also retained on the result page. It is
+read-only UI context, never an editable/saved parameter or an argument to
+`execute()`. Back retains it; reopening recomputes it for the current project.
+An empty string hides the context. Callback errors or non-string results show
+an unavailable-context notice and log the error; the form remains usable.
+
+Keep top-level code and `describe()` free of project changes. Opening or
+cancelling a form must not apply settings, insert objects or emit a calculation
+result; `execute()` is not called until Run. Hosts without this extension ignore
+`describe()`. Plugins without it retain their original loading behavior.
+
+`api.project:current_bed():material_preset_info(slot_idx)` returns a copied table
+with the selected material preset's `id` and `name`. Slots are zero-based, as
+for `material_presets()`. An invalid slot raises a Lua error. The data describes
+the active selection; it does not identify a physical spool or certify saved
+preset persistence. Editing the returned table does not change the preset.
+
+```lua
+function describe()
+    local ok, preset = pcall(function()
+        return api.project:current_bed():material_preset_info(0)
+    end)
+    return "Filament preset: " .. (ok and preset.name or "unavailable") .. " (slot 1)"
+end
+```
+
 ### Plugin `execute` function
 
 The function `execute(params)` takes single argument,a table based upon description in the `info.params`. 
