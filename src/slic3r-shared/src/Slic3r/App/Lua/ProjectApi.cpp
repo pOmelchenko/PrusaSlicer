@@ -671,8 +671,7 @@ using ExposedConfigValue = std::variant<
     double,
     std::string,
     Domain::Vec2d,
-    Domain::FloatOrPercentage,
-    Domain::Percentage>;
+    Domain::FloatOrPercentage>;
 
 ProjectApi::ProjectApi(
     Biz::ProjectInteractor& project_interactor,
@@ -734,6 +733,7 @@ void ProjectApi::register_api(Biz::Lua::LuaEngine& lua)
     //- local ConfigBox = {}
 
     //-- Retrieves a preset/configuration value by name.
+    //-- Percentage-only settings return a number in percentage points: 0.5 means 0.5%.
     //--@param name string The config key.
     //--@return boolean|integer|number|string|table value
     //- function ConfigBox:value(name) end
@@ -753,6 +753,9 @@ void ProjectApi::register_api(Biz::Lua::LuaEngine& lua)
             }
             return it.item->visit(
                 Domain::overloaded{
+                    [](const Domain::Percentage& item) -> ExposedConfigValue
+                    { return item.value; },
+
                     []<typename T>(const T& item) -> ExposedConfigValue
                     requires Domain::is_in_variant<T, ExposedConfigValue>::value
                     { return item; },

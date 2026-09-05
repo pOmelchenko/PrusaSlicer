@@ -129,6 +129,27 @@ There are two main restrictions to be aware of:
 
 Plugin API reference is located [here](https://prusa.io/ps-plugins/)
 
+### Reading percentage settings
+
+`ConfigBox:value(name)` returns percentage-only settings as Lua numbers in
+percentage points. For example, a `filament_shrinkage_compensation_xy` value of
+`0.5%` is returned as `0.5`, not `0.005`. Zero and negative values use the same
+units. These values can be compared numerically and passed back to
+`ConfigBox:set(name, value)` without conversion:
+
+```lua
+local key = "filament_shrinkage_compensation_xy"
+local current = api.project:current_bed():material_presets(0):value(key)
+assert(type(current) == "number")
+```
+
+After a setter call, reacquire the active preset and read the selected value to
+check it against the requested value with an appropriate numeric tolerance.
+The setter itself provides no success status. Matching readback confirms the
+active setting; it does not verify the dimensions of a physical print or save
+a named user preset. This numeric return contract applies to `Percentage`,
+not to the distinct `FloatOrPercentage` setting type.
+
 ## Plugin distribution
 
 At the moment plugins can be distributed as signed zip files. The plugin author needs to generate her public and private 

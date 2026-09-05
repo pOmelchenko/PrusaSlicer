@@ -191,6 +191,62 @@ TEST_CASE_METHOD(
 
 TEST_CASE_METHOD(
     LuaProjectApiFixture,
+    "Lua percentage settings expose numeric percentage points before and after writes",
+    "[Lua][ProjectApi][Percentage]"
+)
+{
+    Slic3r::App::Lua::ProjectApi project_api(project_interactor, font_manager);
+    Slic3r::Biz::Lua::LuaEngine lua;
+    lua.open_registry([&project_api](auto& engine) { project_api.register_api(engine); });
+
+    const auto initial_result = lua.run_script(R"lua(
+        local material = api.project:current_bed():material_presets(0)
+        assert(type(material:value("filament_shrinkage_compensation_xy")) == "number")
+        assert(type(material:value("filament_shrinkage_compensation_z")) == "number")
+        assert(type(api.project:current_bed():print_presets():value("xy_size_compensation")) == "number")
+    )lua");
+    if (!initial_result.valid()) {
+        const sol::error error = initial_result;
+        INFO(error.what());
+    }
+    REQUIRE(initial_result.valid());
+    REQUIRE(config_change_recorder.changed_items.empty());
+    REQUIRE(config_change_recorder.slicing_input_change_count == 0);
+
+    for (const double expected : {0.5, -0.125, 10.0, -10.0, 0.0}) {
+        INFO("Percentage points: " << expected);
+        lua.state()["expected"] = expected;
+        const auto result = lua.run_script(R"lua(
+            local material = api.project:current_bed():material_presets(0)
+            for _, key in ipairs({"filament_shrinkage_compensation_xy", "filament_shrinkage_compensation_z"}) do
+                material:set(key, expected)
+                local retained = material:value(key)
+                local fresh = api.project:current_bed():material_presets(0):value(key)
+                assert(type(retained) == "number" and type(fresh) == "number")
+                assert(math.abs(retained - expected) < 1e-9)
+                assert(math.abs(fresh - expected) < 1e-9)
+            end
+        )lua");
+        if (!result.valid()) {
+            const sol::error error = result;
+            INFO(error.what());
+        }
+        REQUIRE(result.valid());
+
+        // Check native units independently of the Lua getter/setter round trip.
+        const auto& config = project_interactor.selected_config_container()
+            .selected_preset().materials.at(0).config_box();
+        for (const auto* key : {"filament_shrinkage_compensation_xy", "filament_shrinkage_compensation_z"}) {
+            const auto item = config.find(key);
+            REQUIRE(item.item != nullptr);
+            REQUIRE_THAT(item.item->get<Slic3r::Domain::Percentage>().value,
+                         WithinAbs(expected, 1e-9));
+        }
+    }
+}
+
+TEST_CASE_METHOD(
+    LuaProjectApiFixture,
     "Lua preset setters enable material overrides with unchanged stored values",
     "[Lua][ProjectApi]"
 )
