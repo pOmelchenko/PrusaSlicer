@@ -29,6 +29,8 @@ struct PluginParamDef
     std::string label;
     std::string type;
     std::optional<PluginParamValue> default_value;
+    // Display-only dependency on a boolean parameter; hidden values are retained.
+    std::optional<std::string> visible_if;
 };
 
 using PluginParamDefs = std::vector<PluginParamDef>;
@@ -40,6 +42,9 @@ struct PluginMeta
     std::optional<std::string> title;
     std::vector<std::string> menu;
     PluginParamDefs params;
+    std::optional<std::string> description;
+    std::optional<int> dialog_width;
+    std::optional<int> input_width;
 };
 
 

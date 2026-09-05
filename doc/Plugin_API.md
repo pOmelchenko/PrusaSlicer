@@ -86,6 +86,25 @@ The table `info` describes plugin with following keys:
     - `bool` (UI: checkbox)
   - `default` (number or string) default value
 
+### Optional dialog extensions (development host)
+
+The dialog patch adds optional `info.description` (wrapped instructions),
+`info.dialog_width` (400–1000 layout units) and `info.input_width` (minimum
+string-input width, clamped to 100–600). Tall forms scroll while Run and Cancel
+remain accessible. Width hints should leave room for labels.
+
+Each parameter may specify `visible_if = "boolean_parameter_name"`. Its row is
+shown while that boolean is true. Hiding a row preserves its value and still
+passes it to `execute`; plugins must validate selections independently of
+visibility. Missing or non-boolean dependencies leave the row visible.
+
+During execution, `api.show_result(summary, details)` displays plain text in the
+same dialog. Details are initially collapsed. Back returns to the retained form
+without executing the plugin, and Close dismisses the result. A plugin that
+does not call this function retains the normal close-on-Run behavior.
+For compatibility, check `type(api.show_result) == "function"` before calling.
+This is a presentation API and does not confirm preset writes or slicing state.
+
 ### Plugin `execute` function
 
 The function `execute(params)` takes single argument,a table based upon description in the `info.params`. 

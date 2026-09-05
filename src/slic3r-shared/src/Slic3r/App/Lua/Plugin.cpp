@@ -113,6 +113,9 @@ Plugin::parse(Biz::Lua::LuaEngine& lua, const std::string& id_prefix, const std:
     }
     meta.type = type_result.value();
     meta.title = info.get<std::optional<std::string>>("title");
+    meta.description = info.get<std::optional<std::string>>("description");
+    meta.dialog_width = info.get<std::optional<int>>("dialog_width");
+    meta.input_width = info.get<std::optional<int>>("input_width");
 
     if (meta.type != PluginType::ProjectPlugin) {
         return tl::unexpected{fmt::format("Unsupported plugin type '{}'", to_string(meta.type))};
@@ -135,7 +138,8 @@ Plugin::parse(Biz::Lua::LuaEngine& lua, const std::string& id_prefix, const std:
             auto label = p.get_or<std::string>("label", name);
             auto type = p.get<std::string>("type");
             auto value = p.get<PluginParamValue>("default");
-            meta.params.emplace_back(name, label, type, value);
+            meta.params.emplace_back(name, label, type, value,
+                p.get<std::optional<std::string>>("visible_if"));
         });
     }
 

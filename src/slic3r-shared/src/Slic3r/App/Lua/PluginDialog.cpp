@@ -6,7 +6,10 @@
 #include "Slic3r/App/Yoga/LayoutButton.hpp"
 #include "Slic3r/App/Yoga/ToggleButton.hpp"
 #include "Slic3r/App/Yoga/Validator.hpp"
+#include "Slic3r/App/Yoga/ScrollArea.hpp"
 #include "Slic3r/Biz/I18N/I18N.hpp"
+
+#include <algorithm>
 
 namespace Slic3r::App::Lua {
 
@@ -161,6 +164,8 @@ PluginDialog::show_plugin(const PluginMeta& plugin_meta, const PluginParamValueM
     m_meta = plugin_meta;
 
     m_param_controls.clear();
+    m_param_rows.clear();
+    m_result_shown = false;
     while (!content()->items().empty()) {
         content()->remove(content()->get_item(0));
     }
@@ -169,6 +174,20 @@ PluginDialog::show_plugin(const PluginMeta& plugin_meta, const PluginParamValueM
     append_tab(plugin_meta.title.value_or(plugin_meta.id));
 
     content()->set_orientation(Orientation::Vertical);
+    const int dialog_width = std::clamp(plugin_meta.dialog_width.value_or(400), 400, 1000);
+    content()->set_width(dialog_width);
+    content()->set_min_width(dialog_width);
+    m_input_page = content()->emplace_back<Item>();
+    m_input_page->set_orientation(Orientation::Vertical);
+    m_input_page->set_gap(8);
+    if (plugin_meta.description) {
+        auto* description = m_input_page->emplace_back<Text>(*plugin_meta.description);
+        description->set_wrap_mode(Text::WrapMode::Wrap);
+    }
+    m_fields = m_input_page->emplace_back<ScrollArea>();
+    m_fields->set_orientation(Orientation::Vertical);
+    m_fields->set_gap(5);
+    m_fields->set_max_height(460);
 
     const float row_padding = 5.f;
     const float row_gap = 10.f;
@@ -190,7 +209,8 @@ PluginDialog::show_plugin(const PluginMeta& plugin_meta, const PluginParamValueM
             PANIC("Unsupported param type");
         }
     }
-    Item* buttons_row = content()->emplace_back<Item>();
+    update_visibility();
+    Item* buttons_row = m_input_page->emplace_back<Item>();
     buttons_row->set_orientation(Orientation::Horizontal);
     buttons_row->set_flex_grow(1.f);
     buttons_row->set_padding(row_padding);
@@ -203,12 +223,13 @@ PluginDialog::show_plugin(const PluginMeta& plugin_meta, const PluginParamValueM
     ok_btn->set_content_padding(button_padding);
     ok_btn->callbacks().action = [this]()
     {
+        m_result_shown = false;
         if (m_process_function) {
             PluginParamValueMap param_values;
             collect_values(param_values);
             m_process_function(m_meta.value(), param_values);
         }
-        close_action();
+        if (!m_result_shown) close_action();
     };
     ok_btn->set_flex_grow(2);
     ok_btn->set_background_color(Platform::Color::AccentPrimary);
@@ -223,7 +244,42 @@ PluginDialog::show_plugin(const PluginMeta& plugin_meta, const PluginParamValueM
     cancel_btn->set_flex_grow(1);
     cancel_btn->set_min_height(button_height);
 
-    content()->set_min_width(400);
+    // Keep both pages alive: switching from inside Run must not destroy its button.
+    m_result_page = content()->emplace_back<Item>();
+    m_result_page->set_orientation(Orientation::Vertical);
+    m_result_page->set_gap(10);
+    m_result_page->set_visible(false);
+    auto* result_scroll = m_result_page->emplace_back<ScrollArea>();
+    result_scroll->set_orientation(Orientation::Vertical);
+    result_scroll->set_gap(10);
+    result_scroll->set_max_height(460);
+    m_summary = result_scroll->emplace_back<Text>("");
+    m_summary->set_wrap_mode(Text::WrapMode::Wrap);
+    auto* details_toggle = result_scroll->emplace_back<ToggleButton>(Biz::_u8L("Show details"));
+    m_details = result_scroll->emplace_back<Text>("");
+    m_details->set_wrap_mode(Text::WrapMode::Wrap);
+    m_details->set_visible(false);
+    details_toggle->callbacks().checked_changed = [this](bool checked)
+    { m_details->set_visible(checked); };
+    auto* result_buttons = m_result_page->emplace_back<Item>();
+    result_buttons->set_orientation(Orientation::Horizontal);
+    result_buttons->set_gap(row_gap);
+    auto* back = result_buttons->emplace_back<LayoutButton>(Biz::_u8L("Back"));
+    back->set_content_padding(button_padding);
+    back->set_min_height(button_height);
+    back->set_flex_grow(1);
+    back->callbacks().action = [this, details_toggle]()
+    {
+        details_toggle->set_checked(false);
+        m_details->set_visible(false);
+        m_result_page->set_visible(false);
+        m_input_page->set_visible(true);
+    };
+    auto* close = result_buttons->emplace_back<LayoutButton>(Biz::_u8L("Close"));
+    close->set_content_padding(button_padding);
+    close->set_min_height(button_height);
+    close->set_flex_grow(1);
+    close->callbacks().action = [this]() { close_action(); };
 
     open();
 }
@@ -237,6 +293,18 @@ void PluginDialog::emplace_string_param(
     auto [it, _] =
         m_param_controls.emplace(param.name, std::make_unique<StringControl>(param, default_value));
     style_control(it->second->emplace_control(row));
+    if (m_meta->input_width) {
+        const int width = std::clamp(m_meta->dialog_width.value_or(400), 400, 1000);
+        const int input_width = std::clamp(*m_meta->input_width, 100, std::min(600, width - 120));
+        auto* label = row.get_item(0);
+        label->set_width(width - input_width - 32);
+        label->set_flex_grow(0);
+        label->set_flex_shrink(0);
+        auto* input = row.get_item(1);
+        input->set_min_width(input_width);
+        input->set_flex_shrink(0);
+    }
+    m_param_rows[param.name] = &row;
 }
 
 void PluginDialog::emplace_float_param(
@@ -251,6 +319,7 @@ void PluginDialog::emplace_float_param(
         std::make_unique<Control>(param, std::move(default_value))
     );
     style_control(it->second->emplace_control(row));
+    m_param_rows[param.name] = &row;
 }
 
 void PluginDialog::emplace_int_param(
@@ -265,6 +334,7 @@ void PluginDialog::emplace_int_param(
         std::make_unique<Control>(param, std::move(default_value))
     );
     style_control(it->second->emplace_control(row));
+    m_param_rows[param.name] = &row;
 }
 
 void PluginDialog::emplace_bool_param(
@@ -277,17 +347,21 @@ void PluginDialog::emplace_bool_param(
         param.name,
         std::make_unique<BoolControl>(param, std::move(default_value))
     );
-    style_control(it->second->emplace_control(row));
+    auto& control = static_cast<Yoga::ToggleButton&>(it->second->emplace_control(row));
+    style_control(control);
+    control.callbacks().checked_changed = [this](bool) { update_visibility(); };
+    m_param_rows[param.name] = &row;
 }
 
 Yoga::Item& PluginDialog::emplace_row(const char* label)
 {
-    auto* row = content()->emplace_back<Yoga::Item>();
+    auto* row = m_fields->emplace_back<Yoga::Item>();
     row->set_orientation(Yoga::Orientation::Horizontal);
     row->set_flex_grow(1.f);
     row->set_flex_shrink(0.f);
     row->set_justify_content(YGJustifySpaceBetween);
     row->set_align_items(YGAlignCenter);
+    row->set_gap(12);
 
     if (label) {
         row->emplace_back<Yoga::Text>(label)->set_flex_grow(1.f);
@@ -306,5 +380,31 @@ void PluginDialog::collect_values(PluginParamValueMap& param_values) const
     for (const auto& [k, v] : m_param_controls) {
         param_values[k] = v->value();
     }
+}
+
+void PluginDialog::update_visibility()
+{
+    for (const auto& param : m_meta->params) {
+        if (!param.visible_if) continue;
+        auto row = m_param_rows.find(param.name);
+        auto dependency = m_param_controls.find(*param.visible_if);
+        if (row == m_param_rows.end()) continue;
+        // An invalid dependency must not silently hide a required field.
+        bool visible = true;
+        if (dependency != m_param_controls.end()) {
+            const auto value = dependency->second->value();
+            if (const auto* checked = std::get_if<bool>(&value)) visible = *checked;
+        }
+        row->second->set_visible(visible);
+    }
+}
+
+void PluginDialog::show_result(const std::string& summary, const std::string& details)
+{
+    m_summary->set_text(summary);
+    m_details->set_text(details);
+    m_result_shown = true;
+    m_input_page->set_visible(false);
+    m_result_page->set_visible(true);
 }
 }

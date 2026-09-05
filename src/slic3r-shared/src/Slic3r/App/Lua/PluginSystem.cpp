@@ -174,6 +174,12 @@ void PluginSystem::finalize_run()
     ProjectApi project_api(m_project_interactor, m_font_manager);
     Biz::Lua::LuaEngine lua;
     lua.open_registry([&project_api](auto& lua) { project_api.register_api(lua); });
+    lua.open_registry([this](auto& engine)
+    {
+        auto api = engine.state()["api"].template get<sol::table>();
+        api["show_result"] = [this](const std::string& summary, const std::string& details)
+        { m_dialog->show_result(summary, details); };
+    });
     PackageRegistry package_registry;
     lua.open_registry([&package_registry](auto& lua) { package_registry.register_api(lua); });
 
