@@ -89,9 +89,13 @@ The table `info` describes plugin with following keys:
 ### Optional dialog extensions (development host)
 
 The dialog patch adds optional `info.description` (wrapped instructions),
-`info.dialog_width` (400–1000 layout units) and `info.input_width` (minimum
-string-input width, clamped to 100–600). Tall forms scroll while Run and Cancel
-remain accessible. Width hints should leave room for labels.
+`info.dialog_width` (400–1000 layout units) and `info.input_width` (preferred
+control-column width, clamped to 100–600; defaults to half the dialog width).
+Labels share a fixed left column and wrap; text/numeric fields and boolean
+switches start at the same position in the right column. The result's Show
+details switch uses the same alignment. Controls fill the available width,
+allowing room for a scrollbar. Tall forms scroll while Run and Cancel remain
+accessible. Width hints should leave room for labels.
 
 Each parameter may specify `visible_if = "boolean_parameter_name"`. Its row is
 shown while that boolean is true. Hiding a row preserves its value and still

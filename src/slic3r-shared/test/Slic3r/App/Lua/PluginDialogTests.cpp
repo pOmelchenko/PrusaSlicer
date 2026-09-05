@@ -74,7 +74,7 @@ TEST_CASE_METHOD(ImGuiFixture, "Lua tooltips use native widgets without changing
         dialog->show_plugin(meta, {});
         for (size_t i = 0; i < meta.params.size(); ++i) {
             auto* row = dialog->params_content()->get_item(i);
-            auto* widget = row->get_item(i == 3 ? 0 : 1);
+            auto* widget = row->get_item(1);
             Yoga::Tooltip* tooltip = nullptr;
             for (auto* child : widget->objects()) {
                 if (auto* candidate = dynamic_cast<Yoga::Tooltip*>(child)) tooltip = candidate;
@@ -330,7 +330,7 @@ TEST_CASE_METHOD(ImGuiFixture, "Lua dialog preserves hidden inputs and shows res
         .dialog_width = 760, .input_width = 360
     };
     dialog->show_plugin(meta, {{"z40", std::string{"39.98;40.00;39.99;40.01;40.00"}}});
-    auto* toggle = dynamic_cast<Yoga::ToggleButton*>(dialog->params_content()->get_item(0)->get_item(0));
+    auto* toggle = dynamic_cast<Yoga::ToggleButton*>(dialog->params_content()->get_item(0)->get_item(1));
     auto* row = dialog->params_content()->get_item(1);
     auto* input = dynamic_cast<Yoga::InputTextField*>(row->get_item(1));
     REQUIRE(toggle != nullptr);
@@ -350,7 +350,7 @@ TEST_CASE_METHOD(ImGuiFixture, "Lua dialog preserves hidden inputs and shows res
     REQUIRE(dynamic_cast<Yoga::Text*>(result_scroll->get_item(0))->text().find("0.5000%") != std::string::npos);
     auto* details = result_scroll->get_item(2);
     REQUIRE_FALSE(details->is_self_visible());
-    dynamic_cast<Yoga::ToggleButton*>(result_scroll->get_item(1))->set_checked(true);
+    dynamic_cast<Yoga::ToggleButton*>(result_scroll->get_item(1)->get_item(1))->set_checked(true);
     REQUIRE(details->is_self_visible());
     dynamic_cast<Yoga::LayoutButton*>(dialog->result_page()->get_item(1)->get_item(0))->callbacks().action();
     REQUIRE(runs == 1);

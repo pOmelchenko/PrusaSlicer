@@ -89,7 +89,7 @@ public:
     Yoga::Item& emplace_control(Yoga::Item& parent) override
     {
         m_toggle_button = parent.emplace_back<ParamWidget<Yoga::ToggleButton>>(
-            m_param_def, m_param_def.label);
+            m_param_def);
         bool val{false};
         if (m_init_value.has_value()) {
             val = std::get<bool>(m_init_value.value());
@@ -277,7 +277,9 @@ PluginDialog::show_plugin(const PluginMeta& plugin_meta, const PluginParamValueM
     emplace_context(*result_scroll);
     m_summary = result_scroll->emplace_back<Text>("");
     m_summary->set_wrap_mode(Text::WrapMode::Wrap);
-    auto* details_toggle = result_scroll->emplace_back<ToggleButton>(Biz::_u8L("Show details"));
+    auto& details_row = emplace_row(*result_scroll, Biz::_u8L("Show details"));
+    auto* details_toggle = details_row.emplace_back<ToggleButton>();
+    style_control(*details_toggle);
     m_details = result_scroll->emplace_back<Text>("");
     m_details->set_wrap_mode(Text::WrapMode::Wrap);
     m_details->set_visible(false);
@@ -345,21 +347,10 @@ void PluginDialog::emplace_string_param(
     std::optional<PluginParamValue> default_value
 )
 {
-    auto& row = emplace_row(param.label.c_str());
+    auto& row = emplace_row(*m_fields, param.label);
     auto [it, _] =
         m_param_controls.emplace(param.name, std::make_unique<StringControl>(param, default_value));
     style_control(it->second->emplace_control(row));
-    if (m_meta->input_width) {
-        const int width = std::clamp(m_meta->dialog_width.value_or(400), 400, 1000);
-        const int input_width = std::clamp(*m_meta->input_width, 100, std::min(600, width - 120));
-        auto* label = row.get_item(0);
-        label->set_width(width - input_width - 32);
-        label->set_flex_grow(0);
-        label->set_flex_shrink(0);
-        auto* input = row.get_item(1);
-        input->set_min_width(input_width);
-        input->set_flex_shrink(0);
-    }
     m_param_rows[param.name] = &row;
 }
 
@@ -368,7 +359,7 @@ void PluginDialog::emplace_float_param(
     std::optional<PluginParamValue> default_value
 )
 {
-    auto& row     = emplace_row(param.label.c_str());
+    auto& row     = emplace_row(*m_fields, param.label);
     using Control = NumberControl<Yoga::DoubleValidator, double>;
     auto [it, _]  = m_param_controls.emplace(
         param.name,
@@ -383,7 +374,7 @@ void PluginDialog::emplace_int_param(
     std::optional<PluginParamValue> default_value
 )
 {
-    auto& row     = emplace_row(param.label.c_str());
+    auto& row     = emplace_row(*m_fields, param.label);
     using Control = NumberControl<Yoga::IntValidator, int>;
     auto [it, _]  = m_param_controls.emplace(
         param.name,
@@ -398,7 +389,7 @@ void PluginDialog::emplace_bool_param(
     std::optional<PluginParamValue> default_value
 )
 {
-    auto& row = emplace_row();
+    auto& row = emplace_row(*m_fields, param.label);
     auto [it, _] = m_param_controls.emplace(
         param.name,
         std::make_unique<BoolControl>(param, std::move(default_value))
@@ -409,9 +400,9 @@ void PluginDialog::emplace_bool_param(
     m_param_rows[param.name] = &row;
 }
 
-Yoga::Item& PluginDialog::emplace_row(const char* label)
+Yoga::Item& PluginDialog::emplace_row(Yoga::Item& parent, const std::string& label)
 {
-    auto* row = m_fields->emplace_back<Yoga::Item>();
+    auto* row = parent.emplace_back<Yoga::Item>();
     row->set_orientation(Yoga::Orientation::Horizontal);
     row->set_flex_grow(1.f);
     row->set_flex_shrink(0.f);
@@ -419,16 +410,24 @@ Yoga::Item& PluginDialog::emplace_row(const char* label)
     row->set_align_items(YGAlignCenter);
     row->set_gap(12);
 
-    if (label) {
-        row->emplace_back<Yoga::Text>(label)->set_flex_grow(1.f);
-    }
+    // The same label column aligns toggles with text/numeric inputs and results.
+    const int width = std::clamp(m_meta->dialog_width.value_or(400), 400, 1000);
+    const int input_width = std::clamp(m_meta->input_width.value_or(width / 2),
+                                      100, std::min(600, width - 120));
+    auto* text = row->emplace_back<Yoga::Text>(label);
+    text->set_width(width - input_width - 32);
+    text->set_flex_shrink(0);
+    text->set_wrap_mode(Yoga::Text::WrapMode::Wrap);
 
     return *row;
 }
 
 void PluginDialog::style_control(Yoga::Item& ctrl)
 {
-    ctrl.set_flex_grow(3);
+    // Fill the remaining column, including the space available beside a scrollbar.
+    ctrl.set_flex_grow(1);
+    ctrl.set_flex_shrink(1);
+    ctrl.set_min_height(28);
 }
 
 void PluginDialog::collect_values(PluginParamValueMap& param_values) const

@@ -40,7 +40,7 @@ private:
     void emplace_int_param(const PluginParamDef& param, std::optional<PluginParamValue> default_value);
     void emplace_bool_param(const PluginParamDef& param, std::optional<PluginParamValue> default_value);
 
-    Yoga::Item& emplace_row(const char* label=nullptr);
+    Yoga::Item& emplace_row(Yoga::Item& parent, const std::string& label);
     void style_control(Yoga::Item& ctrl);
 
     void collect_values(PluginParamValueMap& param_values) const;
