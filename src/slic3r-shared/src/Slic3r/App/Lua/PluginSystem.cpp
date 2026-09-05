@@ -169,7 +169,7 @@ void PluginSystem::execute_plugin(const std::string& id)
             meta.context = plugin.describe(lua);
         } catch (const std::exception& e) {
             SPDLOG_ERROR("Describing plugin {} failed\n{}", plugin.meta().id, e.what());
-            meta.context = Biz::_u8L("Plugin context unavailable. See the process log for details.");
+            meta.context = PluginContext{Biz::_u8L("Plugin context unavailable. See the process log for details."), std::nullopt};
         }
     }
     m_dialog->show_plugin(

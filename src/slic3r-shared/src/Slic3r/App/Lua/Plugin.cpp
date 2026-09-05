@@ -154,7 +154,7 @@ Plugin::parse(Biz::Lua::LuaEngine& lua, const std::string& id_prefix, const std:
 Plugin::Plugin(std::string path, PluginMeta meta) : m_path(std::move(path)), m_meta(std::move(meta))
 {}
 
-std::optional<std::string> Plugin::describe(Biz::Lua::LuaEngine& lua) const
+std::optional<PluginContext> Plugin::describe(Biz::Lua::LuaEngine& lua) const
 {
     // Existing plugins must not gain a second execution of their top-level code.
     if (!m_meta.has_description_callback) return std::nullopt;
@@ -180,10 +180,15 @@ std::optional<std::string> Plugin::describe(Biz::Lua::LuaEngine& lua) const
         const sol::error err = result;
         throw Biz::Lua::LuaException(err.what(), m_path);
     }
-    if (result.return_count() != 1 || result.get_type() != sol::type::string) {
-        throw Biz::Lua::LuaException("describe() must return one string", m_path);
+    if (result.return_count() < 1 || result.return_count() > 2 || result.get_type() != sol::type::string) {
+        throw Biz::Lua::LuaException("describe() must return text and an optional color", m_path);
     }
-    return result.get<std::string>();
+    PluginContext context{result.get<std::string>(), std::nullopt};
+    if (result.return_count() == 2) {
+        const sol::object color = result.get<sol::object>(1);
+        if (color.get_type() == sol::type::string) context.color = color.as<std::string>();
+    }
+    return context;
 }
 
 void Plugin::execute(Biz::Lua::LuaEngine& lua, const PluginParamValueMap& params) const

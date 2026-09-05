@@ -7,6 +7,7 @@
 #include "Slic3r/App/Platform/StdMainThreadDispatcher.hpp"
 #include "Slic3r/Biz/Emboss/IFontManager.hpp"
 #include "Slic3r/Biz/ISlicingInputChangedListener.hpp"
+#include "Slic3r/Biz/ProjectSettingsInteractor.hpp"
 #include "Slic3r/Biz/OverridableConfigBoxObservableList.hpp"
 #include "Slic3r/Biz/Preset/IO/BundlePaths.hpp"
 #include "Slic3r/Biz/Preset/IPresetChangedListener.hpp"
@@ -178,6 +179,36 @@ TEST_CASE_METHOD(LuaProjectApiFixture, "Lua material identity follows the select
     REQUIRE(lua.state()["current"]["id"].get<std::string>() == next_id);
     REQUIRE(lua.state()["current"]["name"].get<std::string>() == next_name);
     REQUIRE(lua.state()["original"]["id"].get<std::string>() == initial.materials.at(0).id);
+}
+
+TEST_CASE_METHOD(LuaProjectApiFixture, "Lua material color matches project slot overrides without changing the preset", "[Lua][ProjectApi]")
+{
+    using namespace Slic3r;
+    App::Lua::ProjectApi project_api(project_interactor, font_manager);
+    Biz::Lua::LuaEngine lua;
+    lua.open_registry([&project_api](auto& engine) { project_api.register_api(engine); });
+    REQUIRE(lua.run_script(R"lua(
+        bed = api.project:current_bed()
+        original_preset_color = bed:material_presets(0):value("filament_colour")
+        original = bed:material_preset_info(0)
+    )lua").valid());
+    auto& settings = project_interactor.project_settings_interactor();
+    const auto container_id = project_interactor.selected_config_container_id();
+    for (const auto& color : {"#1234AB", "#000000", "#FFFFFF"}) {
+        settings.set_color_from_user(container_id, 0, color);
+        REQUIRE(lua.run_script(R"lua(
+            current = bed:material_preset_info(0)
+            preset_color = bed:material_presets(0):value("filament_colour")
+        )lua").valid());
+        REQUIRE(lua.state()["current"]["color"].get<std::string>() == color);
+        REQUIRE(lua.state()["preset_color"].get<std::string>() == lua.state()["original_preset_color"].get<std::string>());
+        REQUIRE(lua.state()["current"]["id"].get<std::string>() == lua.state()["original"]["id"].get<std::string>());
+    }
+    REQUIRE(lua.run_script(R"lua(
+        current.color = "#000000"
+        assert(bed:material_preset_info(0).color == "#FFFFFF")
+    )lua").valid());
+    REQUIRE(config_change_recorder.changed_items.empty());
 }
 
 TEST_CASE_METHOD(

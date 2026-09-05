@@ -45,6 +45,7 @@ private:
 
     void collect_values(PluginParamValueMap& param_values) const;
     void update_visibility();
+    void emplace_context(Yoga::Item& parent);
 
 private:
     std::optional<PluginMeta> m_meta;

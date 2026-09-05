@@ -10,6 +10,7 @@
 #include "Slic3r/App/Yoga/Validator.hpp"
 #include "Slic3r/App/Yoga/ToggleButton.hpp"
 #include "Slic3r/App/Yoga/Text.hpp"
+#include "Slic3r/App/Yoga/Rectangle.hpp"
 #include "Slic3r/Biz/Lua/LuaException.hpp"
 
 using Catch::Matchers::WithinAbs;
@@ -57,9 +58,15 @@ TEST_CASE("Lua dialog context is recomputed without executing the plugin", "[Lua
     Biz::Lua::LuaEngine lua;
     lua.state()["api"] = lua.state().create_table_with("name", "PLA");
     lua.set_path_resolver([](const std::string&) { return "previous resolver"; });
-    REQUIRE(parsed->describe(lua) == "PLA");
+    REQUIRE(parsed->describe(lua)->text == "PLA");
+    REQUIRE_FALSE(parsed->describe(lua)->color.has_value());
     lua.state()["api"]["name"] = "PETG";
-    REQUIRE(parsed->describe(lua) == "PETG");
+    REQUIRE(parsed->describe(lua)->text == "PETG");
+    script.write(source + "\nfunction describe() return api.name, api.color end");
+    lua.state()["api"]["color"] = "#1234AB";
+    REQUIRE(parsed->describe(lua)->color == "#1234AB");
+    lua.state()["api"]["color"] = 123;
+    REQUIRE_FALSE(parsed->describe(lua)->color.has_value());
     REQUIRE(lua.resolve_file("test") == "previous resolver");
 
     SECTION("callback errors restore the resolver") {
@@ -96,22 +103,68 @@ TEST_CASE_METHOD(ImGuiFixture, "Lua dialog context is read-only and refreshed on
     Lua::PluginMeta meta{
         .id="test.context", .type=Lua::PluginType::ProjectPlugin,
         .params={{.name="reading", .label="Reading", .type="string", .default_value=std::string{}}},
-        .context="Filament: PLA, slot 1"
+        .context=Lua::PluginContext{"Filament: PLA, slot 1", std::nullopt}
     };
     dialog->show_plugin(meta, {{"reading", std::string{"39.98"}}});
-    REQUIRE(dynamic_cast<Yoga::Text*>(dialog->input_page()->get_item(0))->text() == *meta.context);
+    REQUIRE(dynamic_cast<Yoga::Text*>(dialog->input_page()->get_item(0))->text() == meta.context->text);
     auto* run = dynamic_cast<Yoga::LayoutButton*>(dialog->input_page()->get_item(2)->get_item(0));
     run->callbacks().action();
     REQUIRE(values.size() == 1);
     REQUIRE(std::get<std::string>(values.at("reading")) == "39.98");
     dialog->show_result("Preview", "Details");
-    REQUIRE(dynamic_cast<Yoga::Text*>(dialog->result_page()->get_item(0)->get_item(0))->text() == *meta.context);
-    meta.context = "Filament: PETG, slot 1";
+    REQUIRE(dynamic_cast<Yoga::Text*>(dialog->result_page()->get_item(0)->get_item(0))->text() == meta.context->text);
+    meta.context = Lua::PluginContext{"Filament: PETG, slot 1", std::nullopt};
     dialog->show_plugin(meta, values);
-    REQUIRE(dynamic_cast<Yoga::Text*>(dialog->input_page()->get_item(0))->text() == *meta.context);
+    REQUIRE(dynamic_cast<Yoga::Text*>(dialog->input_page()->get_item(0))->text() == meta.context->text);
     REQUIRE_FALSE(dialog->result_page()->is_self_visible());
     auto* fields = dialog->input_page()->get_item(1);
     REQUIRE(dynamic_cast<Yoga::InputTextField*>(fields->get_item(0)->get_item(1))->text() == "39.98");
+}
+
+TEST_CASE_METHOD(ImGuiFixture, "Lua context color is a bordered read-only marker on both pages", "[Lua][PluginDialog]")
+{
+    using namespace Slic3r::App;
+    int runs = 0;
+    auto* dialog = root.emplace_back<TestPluginDialog>(
+        [&](const Lua::PluginMeta&, const Lua::PluginParamValueMap&) { ++runs; });
+    Lua::PluginMeta meta{.id="color", .type=Lua::PluginType::ProjectPlugin,
+        .context=Lua::PluginContext{"Filament: PLA, slot 1", "#1234AB"}};
+    dialog->show_plugin(meta, {});
+    const auto check_marker = [&](Yoga::Item* row, const ImColor& expected) {
+        auto* marker = dynamic_cast<Yoga::Rectangle*>(row->get_item(0));
+        REQUIRE(marker != nullptr);
+        REQUIRE(dynamic_cast<Yoga::LayoutButton*>(marker) == nullptr);
+        REQUIRE(marker->border_width() > 0);
+        REQUIRE_THAT(marker->fill().Value.x, WithinAbs(expected.Value.x, 1e-6));
+        REQUIRE_THAT(marker->fill().Value.y, WithinAbs(expected.Value.y, 1e-6));
+        REQUIRE_THAT(marker->fill().Value.z, WithinAbs(expected.Value.z, 1e-6));
+        auto* text = dynamic_cast<Yoga::Text*>(row->get_item(1));
+        REQUIRE(text != nullptr);
+        REQUIRE(text->text() == meta.context->text);
+        row->set_width(400);
+        row->style_node();
+        row->resize(default_size_info);
+        YGNodeCalculateLayout(row->node(), 400, 60, YGDirectionLTR);
+        REQUIRE(text->width() > 300);
+        REQUIRE(marker->width() >= 16);
+    };
+    check_marker(dialog->input_page()->get_item(0), ImColor(0x12, 0x34, 0xAB));
+    dialog->show_result("Preview", "Details");
+    check_marker(dialog->result_page()->get_item(0)->get_item(0), ImColor(0x12, 0x34, 0xAB));
+    for (const auto& [hex, expected] : std::vector<std::pair<std::string, ImColor>>{
+        {"#000000", ImColor(0,0,0)}, {"#FFFFFF", ImColor(255,255,255)}}) {
+        meta.context->color = hex;
+        dialog->show_plugin(meta, {});
+        check_marker(dialog->input_page()->get_item(0), expected);
+    }
+    for (const auto& invalid : {"#GGGGGG", "red", "", "#123", "#12345678"}) {
+        meta.context->color = invalid;
+        dialog->show_plugin(meta, {});
+        auto* text = dynamic_cast<Yoga::Text*>(dialog->input_page()->get_item(0));
+        REQUIRE(text != nullptr);
+        REQUIRE(text->text() == meta.context->text);
+    }
+    REQUIRE(runs == 0);
 }
 
 TEST_CASE_METHOD(

@@ -7,6 +7,8 @@
 #include "Slic3r/App/Yoga/ToggleButton.hpp"
 #include "Slic3r/App/Yoga/Validator.hpp"
 #include "Slic3r/App/Yoga/ScrollArea.hpp"
+#include "Slic3r/App/Yoga/Rectangle.hpp"
+#include "Slic3r/Biz/Algorithms/Color.hpp"
 #include "Slic3r/Biz/I18N/I18N.hpp"
 
 #include <algorithm>
@@ -180,10 +182,7 @@ PluginDialog::show_plugin(const PluginMeta& plugin_meta, const PluginParamValueM
     m_input_page = content()->emplace_back<Item>();
     m_input_page->set_orientation(Orientation::Vertical);
     m_input_page->set_gap(8);
-    if (plugin_meta.context && !plugin_meta.context->empty()) {
-        auto* context = m_input_page->emplace_back<Text>(*plugin_meta.context);
-        context->set_wrap_mode(Text::WrapMode::Wrap);
-    }
+    emplace_context(*m_input_page);
     if (plugin_meta.description) {
         auto* description = m_input_page->emplace_back<Text>(*plugin_meta.description);
         description->set_wrap_mode(Text::WrapMode::Wrap);
@@ -257,10 +256,7 @@ PluginDialog::show_plugin(const PluginMeta& plugin_meta, const PluginParamValueM
     result_scroll->set_orientation(Orientation::Vertical);
     result_scroll->set_gap(10);
     result_scroll->set_max_height(460);
-    if (plugin_meta.context && !plugin_meta.context->empty()) {
-        auto* context = result_scroll->emplace_back<Text>(*plugin_meta.context);
-        context->set_wrap_mode(Text::WrapMode::Wrap);
-    }
+    emplace_context(*result_scroll);
     m_summary = result_scroll->emplace_back<Text>("");
     m_summary->set_wrap_mode(Text::WrapMode::Wrap);
     auto* details_toggle = result_scroll->emplace_back<ToggleButton>(Biz::_u8L("Show details"));
@@ -290,6 +286,40 @@ PluginDialog::show_plugin(const PluginMeta& plugin_meta, const PluginParamValueM
     close->callbacks().action = [this]() { close_action(); };
 
     open();
+}
+
+void PluginDialog::emplace_context(Yoga::Item& parent)
+{
+    using namespace Yoga;
+    if (!m_meta->context || m_meta->context->text.empty()) return;
+    const auto& context = *m_meta->context;
+    Item* label_parent = &parent;
+    Domain::ColorRGB color;
+    if (context.color && context.color->size() == 7 && context.color->front() == '#' &&
+        std::all_of(context.color->begin() + 1, context.color->end(), [](char c) {
+            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        }) &&
+        Biz::Algorithms::Color::decode_color(*context.color, color)) {
+        auto* row = parent.emplace_back<Item>();
+        row->set_orientation(Orientation::Horizontal);
+        row->set_gap(8);
+        auto* marker = row->emplace_back<Rectangle>();
+        marker->set_object_name("PluginContextColor");
+        marker->set_width(16);
+        marker->set_height(16);
+        marker->set_min_width(16);
+        marker->set_min_height(16);
+        marker->set_flex_shrink(0);
+        marker->set_self_align(YGAlignCenter);
+        marker->set_rounding(8);
+        marker->set_border_width(1);
+        marker->set_border_color(ImColor(160, 160, 160));
+        marker->set_fill(ImColor(color.r(), color.g(), color.b()));
+        label_parent = row;
+    }
+    auto* text = label_parent->emplace_back<Text>(context.text);
+    if (label_parent != &parent) text->set_flex_grow(1.f);
+    text->set_wrap_mode(Text::WrapMode::Wrap);
 }
 
 void PluginDialog::emplace_string_param(

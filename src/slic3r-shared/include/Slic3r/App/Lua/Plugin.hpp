@@ -35,6 +35,12 @@ struct PluginParamDef
 
 using PluginParamDefs = std::vector<PluginParamDef>;
 
+struct PluginContext
+{
+    std::string text;
+    std::optional<std::string> color;
+};
+
 struct PluginMeta
 {
     std::string id;
@@ -47,7 +53,7 @@ struct PluginMeta
     std::optional<int> input_width;
     bool has_description_callback{false};
     // Fresh display-only text for this opening; never a saved input parameter.
-    std::optional<std::string> context;
+    std::optional<PluginContext> context;
 };
 
 
@@ -59,7 +65,7 @@ public:
     const std::string& path() const { return m_path; }
 
     void execute(Biz::Lua::LuaEngine& lua, const PluginParamValueMap& params) const;
-    std::optional<std::string> describe(Biz::Lua::LuaEngine& lua) const;
+    std::optional<PluginContext> describe(Biz::Lua::LuaEngine& lua) const;
 
     using ParseResult = tl::expected<Plugin, std::string>;
     static ParseResult

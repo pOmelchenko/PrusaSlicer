@@ -5,6 +5,8 @@
 #include "Slic3r/Math.hpp"
 #include "Slic3r/App/Config/ConfigItemControl.hpp"
 #include "Slic3r/Biz/Algorithms/ModelObject.hpp"
+#include "Slic3r/Biz/Algorithms/Color.hpp"
+#include "Slic3r/Biz/ProjectSettingsInteractor.hpp"
 #include "Slic3r/Biz/Emboss/EmbossJob.hpp"
 #include "Slic3r/Biz/Emboss/SvgShapeProvider.hpp"
 #include "Slic3r/Biz/Emboss/TextPresetManager.hpp"
@@ -147,7 +149,11 @@ struct BedInstRef
     {
         const auto& material = config_container().selected_preset().materials.at(slot_idx);
         // Return a copy; editing the Lua table cannot rename or select a preset.
-        return sol::state_view(state).create_table_with("id", material.id, "name", material.name);
+        auto info = sol::state_view(state).create_table_with("id", material.id, "name", material.name);
+        // Match the main material UI, including the user's project color override.
+        const auto colors = project_interactor.project_settings_interactor().get_colors(ref.config_container_id);
+        if (slot_idx < colors.size()) info["color"] = Biz::Algorithms::Color::encode_color(colors[slot_idx]);
+        return info;
     }
 };
 
@@ -839,7 +845,8 @@ void ProjectApi::register_api(Biz::Lua::LuaEngine& lua)
     //- function BedInstRef:material_presets(slot_idx) end
     //-- Returns a snapshot of the selected material preset identity.
     //--@param slot_idx integer Zero-based material slot.
-    //--@return table info Contains id and name strings; invalid slots raise an error.
+    //--@return table info Contains id, name and optional color (#RRGGBB, current project slot color).
+    //-- Invalid slots raise an error; color is absent when unavailable.
     //- function BedInstRef:material_preset_info(slot_idx) end
     state.new_usertype<BedInstRef>("BedInstRef", sol::no_constructor,
         "printer_config", &BedInstRef::printer_config,
