@@ -31,6 +31,8 @@ struct PluginParamDef
     std::optional<PluginParamValue> default_value;
     // Display-only dependency on a boolean parameter; hidden values are retained.
     std::optional<std::string> visible_if;
+    // Optional plain-text help; never a saved parameter value.
+    std::optional<std::string> tooltip;
 };
 
 using PluginParamDefs = std::vector<PluginParamDef>;

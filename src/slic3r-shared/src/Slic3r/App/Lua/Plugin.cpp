@@ -139,8 +139,11 @@ Plugin::parse(Biz::Lua::LuaEngine& lua, const std::string& id_prefix, const std:
             auto label = p.get_or<std::string>("label", name);
             auto type = p.get<std::string>("type");
             auto value = p.get<PluginParamValue>("default");
+            std::optional<std::string> tooltip;
+            const sol::object help = p["tooltip"];
+            if (help.get_type() == sol::type::string) tooltip = help.as<std::string>();
             meta.params.emplace_back(name, label, type, value,
-                p.get<std::optional<std::string>>("visible_if"));
+                p.get<std::optional<std::string>>("visible_if"), std::move(tooltip));
         });
     }
 

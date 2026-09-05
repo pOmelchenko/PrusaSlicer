@@ -33,6 +33,84 @@ public:
 
 } // namespace
 
+TEST_CASE("Lua parameter tooltips accept plain text and ignore unsupported metadata", "[Lua][PluginDialog]")
+{
+    using namespace Slic3r;
+    for (const auto& help : {"nil", "42", "false", "{}", "''", "'Line one\\nLine two: 50% <text>'"}) {
+        Biz::Lua::LuaEngine lua;
+        REQUIRE(lua.run_script(std::string{
+            "info={id='help',type='project.plugin',params={{name='reading',type='string',default='',tooltip="}
+            + help + "}}}; function execute() end").valid());
+        const auto plugin = App::Lua::Plugin::parse(lua, "", "help.lua");
+        REQUIRE(plugin.has_value());
+        const auto& tooltip = plugin->meta().params.at(0).tooltip;
+        if (help[0] == '\'') {
+            REQUIRE(tooltip.has_value());
+            REQUIRE(*tooltip == (std::string{help} == "''" ? "" : "Line one\nLine two: 50% <text>"));
+        } else {
+            REQUIRE_FALSE(tooltip.has_value());
+        }
+    }
+}
+
+TEST_CASE_METHOD(ImGuiFixture, "Lua tooltips use native widgets without changing parameter values", "[Lua][PluginDialog]")
+{
+    using namespace Slic3r::App;
+    int runs = 0;
+    Lua::PluginParamValueMap values;
+    auto* dialog = root.emplace_back<TestPluginDialog>(
+        [&](const Lua::PluginMeta&, const Lua::PluginParamValueMap& params) { ++runs; values = params; });
+    Lua::PluginMeta meta{.id="tooltips", .type=Lua::PluginType::ProjectPlugin,
+        .params={
+            {.name="reading", .label="Reading", .type="string", .default_value=std::string{"39.98"}},
+            {.name="scale", .label="Scale", .type="float", .default_value=0.5},
+            {.name="count", .label="Count", .type="int", .default_value=3},
+            {.name="apply", .label="Apply", .type="bool", .default_value=false}
+        }};
+    for (const std::optional<std::string>& help : std::vector<std::optional<std::string>>{
+        "First line\n\nLong help with a literal 50% and <text>; use 39.98;40.00;39.99 as readings.",
+        std::string{}, std::nullopt}) {
+        for (auto& param : meta.params) param.tooltip = help;
+        dialog->show_plugin(meta, {});
+        for (size_t i = 0; i < meta.params.size(); ++i) {
+            auto* row = dialog->params_content()->get_item(i);
+            auto* widget = row->get_item(i == 3 ? 0 : 1);
+            Yoga::Tooltip* tooltip = nullptr;
+            for (auto* child : widget->objects()) {
+                if (auto* candidate = dynamic_cast<Yoga::Tooltip*>(child)) tooltip = candidate;
+            }
+            REQUIRE(tooltip != nullptr);
+            REQUIRE(tooltip->text() == help.value_or(""));
+            REQUIRE_FALSE(tooltip->opened());
+            if (help && !help->empty()) {
+                auto* label = dynamic_cast<Yoga::Text*>(tooltip->content_item()->get_item(0));
+                REQUIRE(label != nullptr);
+                REQUIRE(label->wrap_mode() == Yoga::Text::WrapMode::Wrap);
+                tooltip->content_item()->style_node();
+                tooltip->content_item()->resize(default_size_info);
+                YGNodeCalculateLayout(tooltip->content_item()->node(), 800, 600, YGDirectionLTR);
+                REQUIRE_THAT(tooltip->content_item()->width(), WithinAbs(350, 1));
+            }
+            if (auto* input = dynamic_cast<Yoga::InputTextField*>(widget)) {
+                input->callbacks().hovered_changed(true);
+                REQUIRE(tooltip->opened() == (help && !help->empty()));
+                input->callbacks().hovered_changed(false);
+                REQUIRE_FALSE(tooltip->opened());
+            }
+        }
+        REQUIRE(runs == 0);
+    }
+    auto* run = dynamic_cast<Yoga::LayoutButton*>(dialog->input_page()->get_item(1)->get_item(0));
+    REQUIRE(run != nullptr);
+    run->callbacks().action();
+    REQUIRE(runs == 1);
+    REQUIRE(values.size() == 4);
+    REQUIRE(std::get<std::string>(values.at("reading")) == "39.98");
+    REQUIRE(std::get<double>(values.at("scale")) == 0.5);
+    REQUIRE(std::get<int>(values.at("count")) == 3);
+    REQUIRE_FALSE(std::get<bool>(values.at("apply")));
+}
+
 TEST_CASE("Lua dialog context is recomputed without executing the plugin", "[Lua][PluginDialog]")
 {
     using namespace Slic3r;

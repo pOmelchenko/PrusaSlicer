@@ -12,10 +12,27 @@
 #include "Slic3r/Biz/I18N/I18N.hpp"
 
 #include <algorithm>
+#include <utility>
 
 namespace Slic3r::App::Lua {
 
 namespace {
+
+// Reuse the settings widgets' tooltip, including their native hover behavior.
+template <typename Widget>
+class ParamWidget : public Widget
+{
+public:
+    template <typename... Args>
+    ParamWidget(const PluginParamDef& param, Args&&... args) :
+        Widget(std::forward<Args>(args)...)
+    {
+        if (!param.tooltip || param.tooltip->empty()) return;
+        this->set_tooltip(*param.tooltip);
+        this->m_tooltip->set_text_wrap(true);
+        this->m_tooltip->content_item()->set_width(350);
+    }
+};
 
 class StringControl : public Details::IParamControl
 {
@@ -46,7 +63,7 @@ public:
                 m_param_def.default_value.value_or("")
             );
         }
-        m_textfield = parent.emplace_back<Yoga::InputTextField>();
+        m_textfield = parent.emplace_back<ParamWidget<Yoga::InputTextField>>(m_param_def);
         m_textfield->set_text(val);
         return *m_textfield;
     }
@@ -71,7 +88,8 @@ public:
 
     Yoga::Item& emplace_control(Yoga::Item& parent) override
     {
-        m_toggle_button = parent.emplace_back<Yoga::ToggleButton>(m_param_def.label);
+        m_toggle_button = parent.emplace_back<ParamWidget<Yoga::ToggleButton>>(
+            m_param_def, m_param_def.label);
         bool val{false};
         if (m_init_value.has_value()) {
             val = std::get<bool>(m_init_value.value());
@@ -133,7 +151,7 @@ public:
                 m_param_def.default_value.value_or("0")
             );
         }
-        m_textfield = parent.emplace_back<Yoga::InputTextField>();
+        m_textfield = parent.emplace_back<ParamWidget<Yoga::InputTextField>>(m_param_def);
         auto validator = std::make_unique<ValidatorType>();
 
         m_textfield->set_validator(std::move(validator));

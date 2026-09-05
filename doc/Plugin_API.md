@@ -98,6 +98,14 @@ shown while that boolean is true. Hiding a row preserves its value and still
 passes it to `execute`; plugins must validate selections independently of
 visibility. Missing or non-boolean dependencies leave the row visible.
 
+Each parameter may also specify `tooltip = "Help text"`. String, float and int
+fields and boolean toggles display this text on hover using the native settings
+tooltip. Newlines are preserved and long lines wrap at a width of 350 layout
+units. Content is plain text: markup, images and clickable links are not
+supported. Missing, empty or non-string tooltips leave the control without help.
+Tooltips do not execute the plugin and are not saved or passed to `execute`.
+Earlier hosts ignore this optional metadata.
+
 During execution, `api.show_result(summary, details)` displays plain text in the
 same dialog. Details are initially collapsed. Back returns to the retained form
 without executing the plugin, and Close dismisses the result. A plugin that
